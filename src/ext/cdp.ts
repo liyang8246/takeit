@@ -8,11 +8,10 @@ import type { Act, View } from '../shared/protocol.ts'
 
 export type Send = (method: string, params?: Record<string, unknown>) => Promise<unknown>
 
-export const sender =
-  (tabId: number): Send =>
-  async (method, params) =>
+export function sender(tabId: number): Send {
+  return async (method, params) =>
     (await chrome.debugger.sendCommand({ tabId }, method, params)) ?? {}
-
+}
 
 /** 没有语义、只会制造噪音的标签。 */
 const DROP = new Set([
@@ -91,17 +90,25 @@ const KEEP_ATTRS = new Set([
   'tabindex',
 ])
 /** 空值只有这些属性才值得写成裸名字。 */
-const BOOLEAN_ATTRS = new Set(['checked', 'disabled', 'readonly', 'required', 'selected', 'multiple', 'open'])
+const BOOLEAN_ATTRS = new Set([
+  'checked',
+  'disabled',
+  'readonly',
+  'required',
+  'selected',
+  'multiple',
+  'open',
+])
 
 // ---- DOMSnapshot.captureSnapshot 的列式返回 ----
 /** 稀疏列。协议里写的是 index/value, 实际应答可能是 indexes/values, 两种都认。 */
-type Rare = {
+interface Rare {
   index?: number[]
   indexes?: number[]
   value?: number[]
   values?: number[]
 }
-export type NodesTable = {
+export interface NodesTable {
   parentIndex: number[]
   nodeType: number[]
   nodeName: number[]
@@ -114,16 +121,16 @@ export type NodesTable = {
   contentDocumentIndex?: Rare
   pseudoType?: Rare
 }
-export type SnapshotDoc = {
+export interface SnapshotDoc {
   nodes: NodesTable
-  layout: { nodeIndex: number[]; styles?: number[][]; bounds?: number[][] }
+  layout: { nodeIndex: number[], styles?: number[][], bounds?: number[][] }
 }
 
 const rareIndex = (r?: Rare): number[] => r?.indexes ?? r?.index ?? []
 const rareValue = (r?: Rare): number[] => r?.values ?? r?.value ?? []
 
 /** 一个 document 展开后的查询上下文。 */
-type Ctx = {
+interface Ctx {
   t: NodesTable
   layoutPos: Map<number, number>
   styles: number[][]
@@ -136,7 +143,7 @@ type Ctx = {
   strings: string[]
 }
 
-type Item = {
+interface Item {
   /** 压缩后的标签路径, 如 p / div>p / div>div>p */
   label: string
   uid?: number | undefined
@@ -148,7 +155,7 @@ type Item = {
 
 const squash = (s: string): string => s.replace(/\s+/g, ' ').trim()
 
-const rareMap = (r: Rare | undefined, strings: string[]): Map<number, string> => {
+function rareMap(r: Rare | undefined, strings: string[]): Map<number, string> {
   const idx = rareIndex(r)
   const val = rareValue(r)
   return new Map(idx.map((n, k) => [n, strings[val[k] ?? 0] ?? '']))
@@ -156,15 +163,20 @@ const rareMap = (r: Rare | undefined, strings: string[]): Map<number, string> =>
 
 function contextOf(documents: SnapshotDoc[], docIndex: number, strings: string[]): Ctx | undefined {
   const doc = documents[docIndex]
-  if (!doc) return undefined
+  if (!doc)
+    return undefined
   const t = doc.nodes
   const kids: number[][] = t.nodeType.map(() => [])
   for (let i = 1; i < t.nodeType.length; i += 1) {
     const p = t.parentIndex[i] ?? -1
-    if (p >= 0 && p < kids.length) kids[p]?.push(i)
+    if (p >= 0 && p < kids.length)
+      kids[p]?.push(i)
   }
   const live = rareMap(t.inputValue, strings)
-  for (const [i, v] of rareMap(t.textValue, strings)) if (!live.has(i)) live.set(i, v)
+  for (const [i, v] of rareMap(t.textValue, strings)) {
+    if (!live.has(i))
+      live.set(i, v)
+  }
 
   const layoutPos = new Map<number, number>()
   ;(doc.layout?.nodeIndex ?? []).forEach((node, pos) => layoutPos.set(node, pos))
@@ -188,13 +200,17 @@ function contextOf(documents: SnapshotDoc[], docIndex: number, strings: string[]
 /** 没有布局盒不代表后代不可见 (如 display:contents)。 */
 function hiddenReason(c: Ctx, i: number): string | undefined {
   const pos = c.layoutPos.get(i)
-  if (pos === undefined) return 'no-layout'
+  if (pos === undefined)
+    return 'no-layout'
   const style = c.styles[pos] ?? []
-  if (c.strings[style[0] ?? -1] === 'hidden') return 'visibility'
+  if (c.strings[style[0] ?? -1] === 'hidden')
+    return 'visibility'
   const opacity = c.strings[style[1] ?? -1]
-  if (opacity !== undefined && Number(opacity) === 0) return 'opacity'
+  if (opacity !== undefined && Number(opacity) === 0)
+    return 'opacity'
   const box = c.bounds[pos]
-  if (box && ((box[2] ?? 0) === 0 || (box[3] ?? 0) === 0)) return 'size'
+  if (box && ((box[2] ?? 0) === 0 || (box[3] ?? 0) === 0))
+    return 'size'
   return undefined
 }
 
@@ -206,43 +222,53 @@ function attrOf(c: Ctx, i: number): Map<string, string> {
   const raw = c.t.attributes[i] ?? []
   for (let j = 0; j + 1 < raw.length; j += 2) {
     const k = c.strings[raw[j] ?? 0]
-    if (k) m.set(k.toLowerCase(), c.strings[raw[j + 1] ?? 0] ?? '')
+    if (k)
+      m.set(k.toLowerCase(), c.strings[raw[j + 1] ?? 0] ?? '')
   }
   return m
 }
 
-const hasHandler = (attrs: Map<string, string>): boolean => {
-  for (const k of attrs.keys()) if (k.length > 2 && k.startsWith('on')) return true
+function hasHandler(attrs: Map<string, string>): boolean {
+  for (const k of attrs.keys()) {
+    if (k.length > 2 && k.startsWith('on'))
+      return true
+  }
   return false
 }
 
 /**
  * 控件: 自己承载语义, 名字取自后代, 并且不再铺后代。
- * 注意 isClickable 不算控件 —— html/body 因为事件委托永远"可点", 一旦当控件
+ * 注意 isClickable 不算控件: html/body 因为事件委托永远"可点", 一旦当控件
  * 就会把整页文本吞成一个标签。
  */
 function isControl(c: Ctx, i: number): boolean {
   const tag = tagOf(c, i)
-  if (INTERACTIVE_TAGS.has(tag)) return true
+  if (INTERACTIVE_TAGS.has(tag))
+    return true
   const attrs = attrOf(c, i)
   return (
-    INTERACTIVE_ROLES.has((attrs.get('role') ?? '').toLowerCase()) ||
-    hasHandler(attrs) ||
-    attrs.has('tabindex') ||
-    attrs.get('contenteditable') !== undefined
+    INTERACTIVE_ROLES.has((attrs.get('role') ?? '').toLowerCase())
+    || hasHandler(attrs)
+    || attrs.has('tabindex')
+    || attrs.get('contenteditable') !== undefined
   )
 }
 
 /** 控件里是否还套着别的可点元素 (嵌套链接/按钮), 那种情况必须继续往下铺。 */
 function hasNestedControl(c: Ctx, i: number, seen = new Set<number>()): boolean {
-  if (seen.has(i)) return false
+  if (seen.has(i))
+    return false
   seen.add(i)
   for (const child of c.kids[i] ?? []) {
-    if (c.pseudo.has(child) || DROP.has(tagOf(c, child))) continue
+    if (c.pseudo.has(child) || DROP.has(tagOf(c, child)))
+      continue
     const why = hiddenReason(c, child)
-    if (why && why !== 'no-layout') continue
-    if (!why && typeOf(c, child) === 1 && (c.clickable.has(child) || isControl(c, child))) return true
-    if (hasNestedControl(c, child, seen)) return true
+    if (why && why !== 'no-layout')
+      continue
+    if (!why && typeOf(c, child) === 1 && (c.clickable.has(child) || isControl(c, child)))
+      return true
+    if (hasNestedControl(c, child, seen))
+      return true
   }
   return false
 }
@@ -252,13 +278,17 @@ function collectText(c: Ctx, root: number): string {
   const parts: string[] = []
 
   const walk = (i: number): void => {
-    if (c.pseudo.has(i) || DROP.has(tagOf(c, i))) return
+    if (c.pseudo.has(i) || DROP.has(tagOf(c, i)))
+      return
     const why = hiddenReason(c, i)
-    if (why && why !== 'no-layout') return
+    if (why && why !== 'no-layout')
+      return
     if (typeOf(c, i) === 3) {
-      if (why) return
+      if (why)
+        return
       const t = squash(c.strings[c.t.nodeValue[i] ?? 0] ?? '')
-      if (t) parts.push(t)
+      if (t)
+        parts.push(t)
       return
     }
     if (typeOf(c, i) === 1 && !why) {
@@ -274,35 +304,80 @@ function collectText(c: Ctx, root: number): string {
   return squash(parts.join(' '))
 }
 
-function item(c: Ctx, i: number, documents: SnapshotDoc[], view: View, visited: Set<number>): Item | null {
-  const type = typeOf(c, i)
-  const tag = tagOf(c, i)
-  if (c.pseudo.has(i) || DROP.has(tag)) return null
-  const why = type === 1 ? hiddenReason(c, i) : undefined
-  if (why && why !== 'no-layout') {
-    return view.hidden ? { label: `${tag.toLowerCase()}(hidden:${why})`, props: [], kids: [] } : null
+function keptProps(attrs: Map<string, string>, live: string | undefined): string[] {
+  const props: string[] = []
+  for (const [k, v] of attrs) {
+    if (!KEEP_ATTRS.has(k) || k === 'alt' || (k === 'value' && live !== undefined))
+      continue
+    if (v === '') {
+      if (BOOLEAN_ATTRS.has(k))
+        props.push(k)
+      continue
+    }
+    props.push(`${k}="${v}"`)
   }
+  // 实时值覆盖 HTML 初始值, 包括用户清空后的空字符串。
+  if (live !== undefined)
+    props.push(`value="${live}"`)
+  const handler = [
+    ...attrs.keys(),
+  ].find(k => k.startsWith('on'))
+  if (handler)
+    props.push(handler)
+  return props
+}
 
-  const attrs = type === 1 ? attrOf(c, i) : new Map<string, string>()
-  const ownText = squash(
-    (c.kids[i] ?? [])
-      .filter((k) => typeOf(c, k) === 3 && !c.pseudo.has(k) && !hiddenReason(c, k))
-      .map((k) => c.strings[c.t.nodeValue[k] ?? 0] ?? '')
-      .join(' '),
-  )
-  const interactive = type === 1 && !why && isControl(c, i)
-  const alt = why ? '' : attrs.get('alt') ?? ''
-  // isClickable 只在叶子上算语义: 容器级(html/body/卡片)永远被事件委托标成可点,
-  // 认了它就会把整页文本拼成一个标签, 或者给容器发一个没人会点的 uid
-  const clickOnly = !why && c.clickable.has(i) && (c.kids[i] ?? []).every((k) => typeOf(c, k) === 3)
-  const semantic = type === 1 && (interactive || clickOnly || alt !== '' || ownText !== '')
+function itemProps(attrs: Map<string, string>, live: string | undefined, view: View, text: string, alt: string): string[] {
+  const props: string[] = []
+  // id/class 默认剥掉, 只有显式要求才带上; 既然要了就给完整值, class 截断了没法用于匹配
+  for (const key of ['id', 'class'] as const) {
+    const value = attrs.get(key)
+    if (view[key] && value)
+      props.push(`${key}="${value}"`)
+  }
+  if (text)
+    props.push(`"${text}"`)
+  if (alt)
+    props.push(`alt="${alt}"`)
+  return [
+    ...props,
+    ...keptProps(attrs, live),
+  ]
+}
 
-  // 控件不铺后代 (名字已经取自后代了), 除非里面还套着别的控件
+function compressItem(type: number, tag: string, kids: Item[]): Item | null {
+  // 没有语义的容器: 自己不成行。单链压进子节点的路径, 分叉的才留一层结构
+  if (kids.length === 0)
+    return null
+  const only = kids[0]
+  if (type !== 1) {
+    // #document / shadow fragment 是透明的, 不进路径
+    return kids.length === 1 && only
+      ? only
+      : {
+          label: '',
+          props: [],
+          kids,
+          ghost: true,
+        }
+  }
+  if (kids.length === 1 && only)
+    return { ...only, label: `${tag.toLowerCase()}>${only.label}` }
+  return {
+    label: tag.toLowerCase(),
+    props: [],
+    kids,
+  }
+}
+
+function childItems(c: Ctx, i: number, documents: SnapshotDoc[], view: View, visited: Set<number>, interactive: boolean): Item[] {
   const kids: Item[] = []
+  // 控件不铺后代 (名字已经取自后代了), 除非里面还套着别的控件
   if (!interactive || hasNestedControl(c, i)) {
     for (const child of c.kids[i] ?? []) {
       const it = item(c, child, documents, view, visited)
-      if (it) kids.push(it)
+      if (it)
+        kids.push(it)
     }
   }
 
@@ -313,55 +388,66 @@ function item(c: Ctx, i: number, documents: SnapshotDoc[], view: View, visited: 
     if (subCtx) {
       visited.add(sub)
       const it = item(subCtx, 0, documents, view, visited)
-      if (it) kids.push(it)
+      if (it)
+        kids.push(it)
     }
   }
+  return kids
+}
 
-  if (why && view.hidden && !semantic) return { label: `${tag.toLowerCase()}(hidden:${why})`, props: [], kids }
-
+function elementItem(c: Ctx, i: number, view: View, why: string | undefined, interactive: boolean, kids: Item[]): Item | null {
+  const tag = tagOf(c, i)
+  const attrs = attrOf(c, i)
+  const ownText = squash(
+    (c.kids[i] ?? [])
+      .filter(k => typeOf(c, k) === 3 && !c.pseudo.has(k) && !hiddenReason(c, k))
+      .map(k => c.strings[c.t.nodeValue[k] ?? 0] ?? '')
+      .join(' '),
+  )
+  const alt = why
+    ? ''
+    : attrs.get('alt') ?? ''
+  // isClickable 只在叶子上算语义: 容器级(html/body/卡片)永远被事件委托标成可点,
+  // 认了它就会把整页文本拼成一个标签, 或者给容器发一个没人会点的 uid
+  const clickOnly = !why && c.clickable.has(i) && (c.kids[i] ?? []).every(k => typeOf(c, k) === 3)
+  const semantic = interactive || clickOnly || alt !== '' || ownText !== ''
+  const label = why && view.hidden
+    ? `${tag.toLowerCase()}(hidden:${why})`
+    : tag.toLowerCase()
   if (!semantic) {
-    // 没有语义的容器: 自己不成行。单链压进子节点的路径, 分叉的才留一层结构
-    if (kids.length === 0) return null
-    const only = kids[0]
-    if (type !== 1) {
-      // #document / shadow fragment 是透明的, 不进路径
-      return kids.length === 1 && only ? only : { label: '', props: [], kids, ghost: true }
-    }
-    if (kids.length === 1 && only) {
-      return { ...only, label: `${tag.toLowerCase()}>${only.label}` }
-    }
-    return { label: tag.toLowerCase(), props: [], kids }
+    return why && view.hidden
+      ? { label, props: [], kids }
+      : compressItem(1, tag, kids)
   }
+  const text = interactive
+    ? collectText(c, i)
+    : ownText
+  return {
+    label,
+    uid: why ? undefined : c.t.backendNodeId[i],
+    props: itemProps(attrs, c.live.get(i), view, text, alt),
+    kids,
+  }
+}
 
-  const text = interactive ? collectText(c, i) : ownText
-  const props: string[] = []
-  // id/class 默认剥掉, 只有显式要求才带上; 既然要了就给完整值, class 截断了没法用于匹配
-  if (view.id) {
-    const v = attrs.get('id')
-    if (v) props.push(`id="${v}"`)
+function item(c: Ctx, i: number, documents: SnapshotDoc[], view: View, visited: Set<number>): Item | null {
+  const type = typeOf(c, i)
+  const tag = tagOf(c, i)
+  if (c.pseudo.has(i) || DROP.has(tag))
+    return null
+  const why = type === 1
+    ? hiddenReason(c, i)
+    : undefined
+  if (why && why !== 'no-layout') {
+    return view.hidden
+      ? { label: `${tag.toLowerCase()}(hidden:${why})`, props: [], kids: [] }
+      : null
   }
-  if (view.class) {
-    const v = attrs.get('class')
-    if (v) props.push(`class="${v}"`)
-  }
-  if (text) props.push(`"${text}"`)
-  if (alt) props.push(`alt="${alt}"`)
-  const live = c.live.get(i)
-  for (const [k, v] of attrs) {
-    if (!KEEP_ATTRS.has(k) || k === 'alt' || (k === 'value' && live !== undefined)) continue
-    if (v === '') {
-      if (BOOLEAN_ATTRS.has(k)) props.push(k)
-      continue
-    }
-    props.push(`${k}="${v}"`)
-  }
-  // 实时值覆盖 HTML 初始值, 包括用户清空后的空字符串。
-  if (live !== undefined) props.push(`value="${live}"`)
-  const handler = [...attrs.keys()].find((k) => k.startsWith('on'))
-  if (handler) props.push(handler)
-
-  const label = why && view.hidden ? `${tag.toLowerCase()}(hidden:${why})` : tag.toLowerCase()
-  return { label, uid: why ? undefined : c.t.backendNodeId[i], props, kids }
+  const interactive = type === 1 && !why && isControl(c, i)
+  const kids = childItems(c, i, documents, view, visited, interactive)
+  return type === 1
+    ? elementItem(c, i, view, why, interactive, kids)
+    : compressItem(type, tag, kids)
 }
 
 function render(item: Item, depth: number, out: string[]): void {
@@ -369,7 +455,9 @@ function render(item: Item, depth: number, out: string[]): void {
     for (const kid of item.kids) render(kid, depth, out)
     return
   }
-  const head = item.uid === undefined ? item.label : `uid=${item.uid} ${item.label}`
+  const head = item.uid === undefined
+    ? item.label
+    : `uid=${item.uid} ${item.label}`
   out.push('  '.repeat(depth) + [head, ...item.props].join(' '))
   for (const kid of item.kids) render(kid, depth + 1, out)
 }
@@ -377,9 +465,11 @@ function render(item: Item, depth: number, out: string[]): void {
 /** DOMSnapshot -> 文本。纯函数, 便于拿真实结构做回归测试。 */
 export function renderSnapshot(documents: SnapshotDoc[], strings: string[], view: View = {}): string {
   const ctx = contextOf(documents, 0, strings)
-  if (!ctx) return '(空页面)'
+  if (!ctx)
+    return '(空页面)'
   const root = item(ctx, 0, documents, view, new Set([0]))
-  if (!root) return '(没有可见内容)'
+  if (!root)
+    return '(没有可见内容)'
   const out: string[] = []
   render(root, 0, out)
   return out.join('\n')
@@ -389,13 +479,13 @@ export async function snapshot(send: Send, view: View = {}): Promise<string> {
   const raw = (await send('DOMSnapshot.captureSnapshot', {
     computedStyles: ['visibility', 'opacity'],
     includeDOMRects: false,
-  })) as { documents?: SnapshotDoc[]; strings?: string[] }
+  })) as { documents?: SnapshotDoc[], strings?: string[] }
   return renderSnapshot(raw.documents ?? [], raw.strings ?? [], view)
 }
 
-type EvalResult = {
-  exceptionDetails?: { text?: string; exception?: { description?: string; objectId?: string } }
-  result?: { type?: string; value?: unknown; objectId?: string; description?: string; unserializableValue?: string }
+interface EvalResult {
+  exceptionDetails?: { text?: string, exception?: { description?: string, objectId?: string } }
+  result?: { type?: string, value?: unknown, objectId?: string, description?: string, unserializableValue?: string }
 }
 
 /** 结果可能是 DOM 节点 / jQuery 对象 / 普通值, 统一转成能读的字符串。 */
@@ -407,7 +497,8 @@ async function serialize(send: Send, raw: EvalResult): Promise<string> {
       const d = raw.exceptionDetails
       throw new Error(d.exception?.description ?? d.text ?? '脚本抛异常')
     }
-    if (!result) return ''
+    if (!result)
+      return ''
     if (result.objectId) {
       out = (await send('Runtime.callFunctionOn', {
         objectId: result.objectId,
@@ -427,16 +518,27 @@ async function serialize(send: Send, raw: EvalResult): Promise<string> {
         const d = out.exceptionDetails
         throw new Error(d.exception?.description ?? d.text ?? '脚本结果序列化失败')
       }
-      return out.result?.value === undefined ? '' : String(out.result.value)
+      return out.result?.value === undefined
+        ? ''
+        : String(out.result.value)
     }
-    if (result.type === 'undefined') return ''
-    return 'value' in result ? String(result.value) : result.unserializableValue ?? result.description ?? ''
-  } finally {
-    const ids = new Set([result?.objectId, raw.exceptionDetails?.exception?.objectId,
-      out?.result?.objectId, out?.exceptionDetails?.exception?.objectId])
+    if (result.type === 'undefined')
+      return ''
+    return 'value' in result
+      ? String(result.value)
+      : result.unserializableValue ?? result.description ?? ''
+  }
+  finally {
+    const ids = new Set([
+      result?.objectId,
+      raw.exceptionDetails?.exception?.objectId,
+      out?.result?.objectId,
+      out?.exceptionDetails?.exception?.objectId,
+    ])
     for (const objectId of ids) {
       // 导航可能已销毁上下文, 清理失败不能覆盖脚本结果或原始异常。
-      if (objectId) await send('Runtime.releaseObject', { objectId }).catch(() => {})
+      if (objectId)
+        await send('Runtime.releaseObject', { objectId }).catch(() => {})
     }
   }
 }
@@ -450,7 +552,9 @@ export async function runScript(send: Send, code: string): Promise<string> {
   })) as EvalResult
   if ((await serialize(send, probe)) !== 'function') {
     const injected = (await send('Runtime.evaluate', {
-      expression: __JQUERY__, returnByValue: false, timeout: 10_000,
+      expression: __JQUERY__,
+      returnByValue: false,
+      timeout: 10_000,
     })) as EvalResult
     await serialize(send, injected)
   }
@@ -470,24 +574,39 @@ export async function screenshot(send: Send, full: boolean): Promise<string> {
   let clip: Record<string, number> | undefined
   if (full) {
     const metrics = (await send('Page.getLayoutMetrics')) as {
-      cssContentSize?: { x: number; y: number; width: number; height: number }
+      cssContentSize?: { x: number, y: number, width: number, height: number }
     }
     const size = metrics.cssContentSize
-    if (!size || ![size.x, size.y, size.width, size.height].every(Number.isFinite) || size.width <= 0 || size.height <= 0) {
+    if (!size || ![
+      size.x,
+      size.y,
+      size.width,
+      size.height,
+    ].every(Number.isFinite) || size.width <= 0 || size.height <= 0) {
       throw new Error('整页截图失败: 没有有效的 CSS 页面尺寸')
     }
-    clip = { x: size.x, y: size.y, width: size.width, height: size.height, scale: 1 }
+    clip = {
+      x: size.x,
+      y: size.y,
+      width: size.width,
+      height: size.height,
+      scale: 1,
+    }
   }
   const raw = (await send('Page.captureScreenshot', {
     format: 'png',
     captureBeyondViewport: full,
-    ...(clip ? { clip } : {}),
+    ...(clip
+      ? { clip }
+      : {}),
   })) as { data?: string }
-  if (!raw.data) throw new Error('截图失败: 没有拿到数据')
+  if (!raw.data)
+    throw new Error('截图失败: 没有拿到数据')
   return raw.data
 }
 
-const VK: Record<string, number> = {  Enter: 13,
+const VK: Record<string, number> = {
+  Enter: 13,
   Tab: 9,
   Escape: 27,
   Backspace: 8,
@@ -498,7 +617,7 @@ const VK: Record<string, number> = {  Enter: 13,
   ArrowRight: 39,
 }
 
-const refToId = (ref: string): number => {
+function refToId(ref: string): number {
   const id = Number(ref)
   if (typeof ref !== 'string' || !/^[1-9]\d*$/.test(ref) || !Number.isSafeInteger(id)) {
     throw new Error('ref 必须是 /state 里的正整数 uid, 如 "142"')
@@ -506,14 +625,29 @@ const refToId = (ref: string): number => {
   return id
 }
 
+function validateNavigationUrl(value: string): void {
+  let url: URL
+  try {
+    if (typeof value !== 'string')
+      throw new TypeError('navigate URL 必须是 string')
+    url = new URL(value)
+  }
+  catch {
+    throw new Error('navigate 只接受有效的 http/https URL')
+  }
+  if (!['http:', 'https:'].includes(url.protocol))
+    throw new Error('navigate 只接受 http/https URL')
+}
+
 /** 取元素布局盒中心: 点这里等于用户点这里。 */
-async function center(send: Send, backendNodeId: number): Promise<{ x: number; y: number }> {
+async function center(send: Send, backendNodeId: number): Promise<{ x: number, y: number }> {
   await send('DOM.scrollIntoViewIfNeeded', { backendNodeId })
   const model = (await send('DOM.getBoxModel', { backendNodeId })) as { model?: { content?: number[] } }
   const c = model.model?.content
-  if (!c || c.length < 8) throw new Error('元素没有布局盒 (不可见或已脱离文档)')
-  const xs = [0, 2, 4, 6].map((i) => c[i] ?? 0)
-  const ys = [1, 3, 5, 7].map((i) => c[i] ?? 0)
+  if (!c || c.length < 8)
+    throw new Error('元素没有布局盒 (不可见或已脱离文档)')
+  const xs = [0, 2, 4, 6].map(i => c[i] ?? 0)
+  const ys = [1, 3, 5, 7].map(i => c[i] ?? 0)
   return {
     x: xs.reduce((a, b) => a + b, 0) / 4,
     y: ys.reduce((a, b) => a + b, 0) / 4,
@@ -522,10 +656,17 @@ async function center(send: Send, backendNodeId: number): Promise<{ x: number; y
 
 async function press(send: Send, key: string): Promise<void> {
   const code = VK[key]
-  if (typeof code !== 'number') throw new Error(`不支持的 key: ${key} (支持 ${Object.keys(VK).join('/')})`)
-  const base = { key, code: key, windowsVirtualKeyCode: code, nativeVirtualKeyCode: code }
+  if (typeof code !== 'number')
+    throw new TypeError(`不支持的 key: ${key} (支持 ${Object.keys(VK).join('/')})`)
+  const base = {
+    key,
+    code: key,
+    windowsVirtualKeyCode: code,
+    nativeVirtualKeyCode: code,
+  }
   await send('Input.dispatchKeyEvent', { ...base, type: 'rawKeyDown' })
-  if (key === 'Enter') await send('Input.dispatchKeyEvent', { ...base, type: 'char', text: '\r' })
+  if (key === 'Enter')
+    await send('Input.dispatchKeyEvent', { ...base, type: 'char', text: '\r' })
   await send('Input.dispatchKeyEvent', { ...base, type: 'keyUp' })
 }
 
@@ -539,13 +680,29 @@ export async function act(send: Send, a: Act): Promise<void> {
       return
     }
     case 'type': {
-      if (typeof a.text !== 'string') throw new Error('type 需要 text')
-      if (a.submit !== undefined && typeof a.submit !== 'boolean') throw new Error('submit 必须是 boolean')
+      if (typeof a.text !== 'string')
+        throw new TypeError('type 需要 text')
+      if (a.submit !== undefined && typeof a.submit !== 'boolean')
+        throw new Error('submit 必须是 boolean')
       const id = refToId(a.ref)
       // DOM.focus 对不相交渲染的输入框会报 not focusable, 用真鼠标点一下更可靠
       const { x, y } = await center(send, id)
-      await send('Input.dispatchMouseEvent', { type: 'mousePressed', x, y, button: 'left', clickCount: 1, buttons: 1 })
-      await send('Input.dispatchMouseEvent', { type: 'mouseReleased', x, y, button: 'left', clickCount: 1, buttons: 0 })
+      await send('Input.dispatchMouseEvent', {
+        type: 'mousePressed',
+        x,
+        y,
+        button: 'left',
+        clickCount: 1,
+        buttons: 1,
+      })
+      await send('Input.dispatchMouseEvent', {
+        type: 'mouseReleased',
+        x,
+        y,
+        button: 'left',
+        clickCount: 1,
+        buttons: 0,
+      })
       // 先全选, 否则会追加到旧值后面
       await send('Input.dispatchKeyEvent', {
         type: 'rawKeyDown',
@@ -555,33 +712,27 @@ export async function act(send: Send, a: Act): Promise<void> {
         windowsVirtualKeyCode: 65,
       })
       await send('Input.insertText', { text: a.text })
-      if (a.submit) await press(send, 'Enter')
+      if (a.submit)
+        await press(send, 'Enter')
       return
     }
     case 'key':
       return press(send, a.key)
     case 'scroll':
-      if (typeof a.dy !== 'number' || !Number.isFinite(a.dy)) throw new Error('dy 必须是有限数值')
+      if (typeof a.dy !== 'number' || !Number.isFinite(a.dy))
+        throw new TypeError('dy 必须是有限数值')
       await send('Runtime.evaluate', { expression: `scrollBy(0, ${a.dy})` })
       return
-    case 'navigate': {
-      let url: URL
-      try {
-        if (typeof a.url !== 'string') throw new Error()
-        url = new URL(a.url)
-      } catch {
-        throw new Error('navigate 只接受有效的 http/https URL')
-      }
-      if (!['http:', 'https:'].includes(url.protocol)) throw new Error('navigate 只接受 http/https URL')
+    case 'navigate':
+      validateNavigationUrl(a.url)
       await send('Page.navigate', { url: a.url })
-      await new Promise((r) => setTimeout(r, 600))
+      await new Promise(r => setTimeout(r, 600))
       return
-    }
     case 'wait':
       if (typeof a.ms !== 'number' || !Number.isFinite(a.ms) || a.ms < 0 || a.ms > 10_000) {
         throw new Error('wait ms 必须在 0..10000 范围内')
       }
-      await new Promise((r) => setTimeout(r, a.ms))
+      await new Promise(r => setTimeout(r, a.ms))
       return
     default:
       throw new Error('不支持的 act 操作')

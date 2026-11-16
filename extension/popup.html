@@ -1,73 +1,196 @@
 <!doctype html>
 <html lang="zh-CN">
-<meta charset="utf-8" />
-<title>网页接管</title>
-<style>
-  * { box-sizing: border-box; }
-  body { font: 13px/1.45 system-ui, -apple-system, sans-serif; width: 340px; margin: 0; padding: 14px; color: #111827; }
-  [hidden] { display: none !important; }
+  <meta charset="utf-8" />
+  <title>网页接管</title>
+  <style>
+    * {
+      box-sizing: border-box;
+    }
+    body {
+      font:
+        13px/1.45 system-ui,
+        -apple-system,
+        sans-serif;
+      width: 340px;
+      margin: 0;
+      padding: 14px;
+      color: #111827;
+    }
+    [hidden] {
+      display: none !important;
+    }
 
-  .head { display: flex; align-items: center; gap: 8px; margin-bottom: 12px; }
-  .logo { width: 26px; height: 26px; border-radius: 7px; background: #1e2430; display: grid; place-items: center; flex: none; }
-  .logo svg { width: 18px; height: 18px; }
-  .head h1 { font-size: 14px; font-weight: 600; margin: 0; flex: 1; letter-spacing: -.01em; }
-  .ver { font-size: 11px; color: #9ca3af; }
+    .head {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      margin-bottom: 12px;
+    }
+    .logo {
+      width: 26px;
+      height: 26px;
+      border-radius: 7px;
+      background: #1e2430;
+      display: grid;
+      place-items: center;
+      flex: none;
+    }
+    .logo svg {
+      width: 18px;
+      height: 18px;
+    }
+    .head h1 {
+      font-size: 14px;
+      font-weight: 600;
+      margin: 0;
+      flex: 1;
+      letter-spacing: -0.01em;
+    }
+    .ver {
+      font-size: 11px;
+      color: #9ca3af;
+    }
 
-  .card { background: #f4f4f5; border-radius: 10px; overflow: hidden; }
-  .row { display: flex; align-items: center; gap: 8px; padding: 9px 11px; }
-  .dot { width: 8px; height: 8px; border-radius: 50%; background: #d1d5db; flex: none; }
-  .dot.on { background: #22c55e; }
-  .state { font-weight: 600; flex: 1; }
-  .hr { height: 1px; background: #e4e4e7; }
-  .label { font-size: 12px; color: #6b7280; }
-  code { font: 12px/1.4 ui-monospace, SFMono-Regular, Menlo, monospace; flex: 1; min-width: 0; overflow-wrap: anywhere; color: #374151; }
-  .copy { padding: 2px 9px; border: 1px solid #d4d4d8; background: #fff; border-radius: 6px; font-size: 12px; color: #2563eb; cursor: pointer; }
-  .copy:disabled { color: #9ca3af; cursor: default; }
+    .card {
+      background: #f4f4f5;
+      border-radius: 10px;
+      overflow: hidden;
+    }
+    .row {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 9px 11px;
+    }
+    .dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: #d1d5db;
+      flex: none;
+    }
+    .dot.on {
+      background: #22c55e;
+    }
+    .state {
+      font-weight: 600;
+      flex: 1;
+    }
+    .hr {
+      height: 1px;
+      background: #e4e4e7;
+    }
+    .label {
+      font-size: 12px;
+      color: #6b7280;
+    }
+    code {
+      font:
+        12px/1.4 ui-monospace,
+        SFMono-Regular,
+        Menlo,
+        monospace;
+      flex: 1;
+      min-width: 0;
+      overflow-wrap: anywhere;
+      color: #374151;
+    }
+    .copy {
+      padding: 2px 9px;
+      border: 1px solid #d4d4d8;
+      background: #fff;
+      border-radius: 6px;
+      font-size: 12px;
+      color: #2563eb;
+      cursor: pointer;
+    }
+    .copy:disabled {
+      color: #9ca3af;
+      cursor: default;
+    }
 
-  .primary { width: 100%; margin-top: 12px; padding: 9px; border: 0; border-radius: 8px; background: #2563eb; color: #fff; font-size: 13px; font-weight: 500; cursor: pointer; }
-  .primary.stop { background: #6b7280; }
-  .primary:disabled { background: #9ca3af; cursor: default; }
+    .primary {
+      width: 100%;
+      margin-top: 12px;
+      padding: 9px;
+      border: 0;
+      border-radius: 8px;
+      background: #2563eb;
+      color: #fff;
+      font-size: 13px;
+      font-weight: 500;
+      cursor: pointer;
+    }
+    .primary.stop {
+      background: #6b7280;
+    }
+    .primary:disabled {
+      background: #9ca3af;
+      cursor: default;
+    }
 
-  .notice, details { margin: 10px 0 0; font-size: 12px; color: #4b5563; }
-  summary { color: #2563eb; cursor: pointer; }
-  details p { margin: 8px 0; }
-</style>
+    .notice,
+    details {
+      margin: 10px 0 0;
+      font-size: 12px;
+      color: #4b5563;
+    }
+    summary {
+      color: #2563eb;
+      cursor: pointer;
+    }
+    details p {
+      margin: 8px 0;
+    }
+  </style>
 
-<div class="head">
-  <div class="logo">
-    <svg viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-      <circle cx="16" cy="4" r="1" />
-      <path d="m18 19 1-7-6 1" />
-      <path d="m5 8 3-3 5.5 3-2.36 3.5" />
-      <path d="M4.24 14.5a5 5 0 0 0 6.88 6" />
-      <path d="M13.76 17.5a5 5 0 0 0-6.88-6" />
-    </svg>
+  <div class="head">
+    <div class="logo">
+      <svg
+        viewBox="0 0 24 24"
+        fill="none"
+        stroke="#fff"
+        stroke-width="2"
+        stroke-linecap="round"
+        stroke-linejoin="round"
+      >
+        <circle cx="16" cy="4" r="1" />
+        <path d="m18 19 1-7-6 1" />
+        <path d="m5 8 3-3 5.5 3-2.36 3.5" />
+        <path d="M4.24 14.5a5 5 0 0 0 6.88 6" />
+        <path d="M13.76 17.5a5 5 0 0 0-6.88-6" />
+      </svg>
+    </div>
+    <h1>Page Handover</h1>
+    <span class="ver" id="ver"></span>
   </div>
-  <h1>Page Handover</h1>
-  <span class="ver" id="ver"></span>
-</div>
 
-<div class="card">
-  <div class="row">
-    <span class="dot" id="dot" aria-hidden="true"></span>
-    <span class="state" id="state" role="status" aria-live="polite">读取状态中…</span>
+  <div class="card">
+    <div class="row">
+      <span class="dot" id="dot" aria-hidden="true"></span>
+      <span class="state" id="state" role="status" aria-live="polite">读取状态中…</span>
+    </div>
+    <div class="hr" id="divider" hidden></div>
+    <div class="row" id="token-row" hidden>
+      <span class="label">Token</span>
+      <code id="token"></code>
+      <button class="copy" id="copy" disabled>复制提示词</button>
+    </div>
   </div>
-  <div class="hr" id="divider" hidden></div>
-  <div class="row" id="token-row" hidden>
-    <span class="label">Token</span>
-    <code id="token"></code>
-    <button class="copy" id="copy" disabled>复制提示词</button>
-  </div>
-</div>
 
-<button class="primary" id="go" disabled>开始接管</button>
-<p class="notice" id="notice" role="status" aria-live="polite"></p>
-<details>
-  <summary>使用说明</summary>
-  <p>接管后复制提示词交给 agent，先运行 <code>npx -y @liyang8246/takeit &lt;token&gt; help</code>。</p>
-  <p>每条命令临时连接，完成即退出；无需桥接文件或守护进程。一次只能接管一个标签页，切换会停止旧接管并撤销旧 Token。</p>
-  <p>Token 可操作整个标签页，请勿公开。停止接管、关闭标签页或取消调试黄条会撤销授权；浏览器重启需重新授权。命令超时可能已经执行，请勿自动重试。</p>
-</details>
+  <button class="primary" id="go" disabled>开始接管</button>
+  <p class="notice" id="notice" role="status" aria-live="polite"></p>
+  <details>
+    <summary>使用说明</summary>
+    <p>接管后复制提示词交给 agent，先运行 <code>npx -y @liyang8246/takeit &lt;token&gt; help</code>。</p>
+    <p>
+      每条命令临时连接，完成即退出；无需桥接文件或守护进程。一次只能接管一个标签页，切换会停止旧接管并撤销旧 Token。
+    </p>
+    <p>
+      Token
+      可操作整个标签页，请勿公开。停止接管、关闭标签页或取消调试黄条会撤销授权；浏览器重启需重新授权。命令超时可能已经执行，请勿自动重试。
+    </p>
+  </details>
 
-<script src="popup.js"></script>
+  <script src="popup.js"></script>
 </html>

@@ -13,13 +13,12 @@ npx -y @liyang8246/takeit <token> help
 ## 开发
 
 ```sh
-npm install
-npm run build
-npm run typecheck
-npm test
+pnpm install
+pnpm build
+pnpm run ci
 ```
 
-在 Chrome 加载 [extension](<extension/>)。Node.js ≥22.18。
+在 Chrome 加载 [extension](<extension/>)。开发使用 Node.js 24.15+；CLI 仍支持 22.18+。
 
 Token 即授权。切换即撤权。超时不回滚。
 

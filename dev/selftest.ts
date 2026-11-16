@@ -1,43 +1,63 @@
+import type { Buffer } from 'node:buffer'
+import type { Server } from 'node:net'
+import type { Command, Request } from '../src/shared/protocol.ts'
 import assert from 'node:assert/strict'
-import { createServer, type Server } from 'node:net'
-import { request as httpRequest } from 'node:http'
 import { spawn } from 'node:child_process'
+import { request as httpRequest } from 'node:http'
+import { createServer } from 'node:net'
+import process from 'node:process'
 import { setTimeout as delay } from 'node:timers/promises'
 import { fileURLToPath } from 'node:url'
 import { execute } from '../src/cli/transport.ts'
-import { isRequest, type Command, type Request } from '../src/shared/protocol.ts'
+import { isRequest } from '../src/shared/protocol.ts'
 
 const TOKEN = 'a'.repeat(32)
 const OTHER = 'b'.repeat(32)
-const command: Command = { kind: 'state', view: { id: true } }
+const command: Command = {
+  kind: 'state',
+  view: { id: true },
+}
 const cleanup = new AbortController()
 const tasks: Promise<string>[] = []
-const close = (server: Server) => new Promise<void>((resolve) => server.close(() => resolve()))
-const listen = (server: Server, port: number) => new Promise<number>((resolve, reject) => {
-  server.once('error', reject)
-  server.listen(port, '127.0.0.1', () => {
-    const address = server.address()
-    if (!address || typeof address === 'string') return reject(new Error('没有测试端口'))
-    resolve(address.port)
+const close = (server: Server) => new Promise<void>(resolve => server.close(() => resolve()))
+function listen(server: Server, port: number) {
+  return new Promise<number>((resolve, reject) => {
+    server.once('error', reject)
+    server.listen(port, '127.0.0.1', () => {
+      const address = server.address()
+      if (!address || typeof address === 'string')
+        return reject(new Error('没有测试端口'))
+      resolve(address.port)
+    })
   })
-})
+}
 const probe = createServer()
 const port = await listen(probe, 0)
 await close(probe)
 const base = `http://127.0.0.1:${port}`
-const headers = (token = TOKEN) => ({ authorization: `Bearer ${token}`, 'content-type': 'application/json' })
+const headers = (token = TOKEN) => ({ 'authorization': `Bearer ${token}`, 'content-type': 'application/json' })
 
 async function fetchReady(path: string, init: RequestInit = {}): Promise<Response> {
   const end = Date.now() + 3000
   while (true) {
-    try { return await fetch(`${base}${path}`, { ...init, signal: AbortSignal.timeout(500) }) } catch (error) {
-      if (Date.now() >= end) throw error
+    try {
+      return await fetch(`${base}${path}`, {
+        ...init,
+        signal: AbortSignal.timeout(500),
+      })
+    }
+    catch (error) {
+      if (Date.now() >= end)
+        throw error
       await delay(10)
     }
   }
 }
 async function claim(token = TOKEN): Promise<Request> {
-  const response = await fetchReady('/command', { method: 'POST', headers: headers(token) })
+  const response = await fetchReady('/command', {
+    method: 'POST',
+    headers: headers(token),
+  })
   assert.equal(response.status, 200)
   const body: unknown = await response.json()
   assert.ok(isRequest(body))
@@ -46,13 +66,21 @@ async function claim(token = TOKEN): Promise<Request> {
 }
 async function reply(id: string, data = 'snapshot', token = TOKEN): Promise<void> {
   const response = await fetch(`${base}/reply`, {
-    method: 'POST', headers: headers(token), body: JSON.stringify({ id, ok: true, data }),
+    method: 'POST',
+    headers: headers(token),
+    body: JSON.stringify({ id, ok: true, data }),
   })
   assert.equal(response.status, 200)
   await response.text()
 }
 function start(token = TOKEN, timeoutMs = 2000, signal?: AbortSignal): Promise<string> {
-  const task = execute(token, command, { port, timeoutMs, signal: signal ? AbortSignal.any([signal, cleanup.signal]) : cleanup.signal })
+  const task = execute(token, command, {
+    port,
+    timeoutMs,
+    signal: signal
+      ? AbortSignal.any([signal, cleanup.signal])
+      : cleanup.signal,
+  })
   tasks.push(task)
   void task.catch(() => {})
   return task
@@ -68,12 +96,27 @@ try {
   const denied = await fetchReady('/command', { method: 'POST' })
   assert.equal(denied.status, 403)
   assert.ok(!(await denied.text()).includes(TOKEN), '拒绝响应不能泄漏 token')
-  const wrong = await fetch(`${base}/command`, { method: 'POST', headers: headers(OTHER) })
+  const wrong = await fetch(`${base}/command`, {
+    method: 'POST',
+    headers: headers(OTHER),
+  })
   assert.equal(wrong.status, 403)
-  const hostile = await fetch(`${base}/command`, { method: 'POST', headers: { ...headers(), origin: 'https://evil.test' } })
+  const hostile = await fetch(`${base}/command`, {
+    method: 'POST',
+    headers: {
+      ...headers(),
+      origin: 'https://evil.test',
+    },
+  })
   assert.equal(hostile.status, 403)
   const hostStatus = await new Promise<number>((resolve, reject) => {
-    const req = httpRequest(`${base}/command`, { method: 'POST', headers: { ...headers(), host: 'evil.test' } }, (res) => {
+    const req = httpRequest(`${base}/command`, {
+      method: 'POST',
+      headers: {
+        ...headers(),
+        host: 'evil.test',
+      },
+    }, (res) => {
       res.resume()
       res.on('end', () => resolve(res.statusCode ?? 0))
     })
@@ -81,14 +124,28 @@ try {
     req.end()
   })
   assert.equal(hostStatus, 403)
-  const missing = await fetch(`${base}/unknown`, { method: 'POST', headers: headers() })
+  const missing = await fetch(`${base}/unknown`, {
+    method: 'POST',
+    headers: headers(),
+  })
   assert.equal(missing.status, 404)
   const request = await claim()
   assert.deepEqual(request.command, command)
-  const duplicatePoll = await fetch(`${base}/command`, { method: 'POST', headers: headers() })
+  const duplicatePoll = await fetch(`${base}/command`, {
+    method: 'POST',
+    headers: headers(),
+  })
   assert.equal(duplicatePoll.status, 204, '一次性命令不能重发')
-  for (const body of ['{', JSON.stringify({ id: 'old', ok: true, data: 'bad' }), JSON.stringify({ id: request.id, ok: true })]) {
-    const response = await fetch(`${base}/reply`, { method: 'POST', headers: headers(), body })
+  for (const body of [
+    '{',
+    JSON.stringify({ id: 'old', ok: true, data: 'bad' }),
+    JSON.stringify({ id: request.id, ok: true }),
+  ]) {
+    const response = await fetch(`${base}/reply`, {
+      method: 'POST',
+      headers: headers(),
+      body,
+    })
     assert.ok(response.status === 400 || response.status === 409)
   }
   await reply(request.id)
@@ -99,7 +156,9 @@ try {
   const failure = start()
   const failed = await claim()
   await fetch(`${base}/reply`, {
-    method: 'POST', headers: headers(), body: JSON.stringify({ id: failed.id, ok: false, error: '页面执行失败' }),
+    method: 'POST',
+    headers: headers(),
+    body: JSON.stringify({ id: failed.id, ok: false, error: '页面执行失败' }),
   })
   await assert.rejects(failure, /页面执行失败/)
   await free()
@@ -118,7 +177,12 @@ try {
 
   const busy = createServer()
   await listen(busy, port)
-  try { await assert.rejects(start(TOKEN, 120), /等待端口/) } finally { await close(busy) }
+  try {
+    await assert.rejects(start(TOKEN, 120), /等待端口/)
+  }
+  finally {
+    await close(busy)
+  }
   await free()
   await assert.rejects(start(TOKEN, 120), /等待扩展/)
   await free()
@@ -132,7 +196,9 @@ try {
   const current = await claim()
   assert.notEqual(current.id, old.id)
   const late = await fetch(`${base}/reply`, {
-    method: 'POST', headers: headers(), body: JSON.stringify({ id: old.id, ok: true, data: 'late' }),
+    method: 'POST',
+    headers: headers(),
+    body: JSON.stringify({ id: old.id, ok: true, data: 'late' }),
   })
   assert.equal(late.status, 409, '迟到回执不能结束下一条 CLI')
   await reply(current.id, 'current')
@@ -147,10 +213,13 @@ try {
   try {
     Date.now = () => clockRequest.deadline + 1
     const expiredReply = await fetch(`${base}/reply`, {
-      method: 'POST', headers: headers(), body: JSON.stringify({ id: clockRequest.id, ok: true, data: 'too late' }),
+      method: 'POST',
+      headers: headers(),
+      body: JSON.stringify({ id: clockRequest.id, ok: true, data: 'too late' }),
     })
     assert.equal(expiredReply.status, 410, '即使 timer 尚未调度，也不得接受越过 deadline 的回执')
-  } finally {
+  }
+  finally {
     Date.now = realNow
     clockCancel.abort()
   }
@@ -164,7 +233,10 @@ try {
   await reply(oneRequest.id, 'one')
   assert.equal(await one, 'one')
   const twoRequest = await claim(OTHER)
-  const oldToken = await fetch(`${base}/command`, { method: 'POST', headers: headers(TOKEN) })
+  const oldToken = await fetch(`${base}/command`, {
+    method: 'POST',
+    headers: headers(TOKEN),
+  })
   assert.equal(oldToken.status, 403)
   await reply(twoRequest.id, 'two', OTHER)
   assert.equal(await two, 'two')
@@ -184,17 +256,31 @@ try {
   console.log('ok  中断清理，未投递/已投递结果区分')
 
   const cli = fileURLToPath(new URL('../dist/cli.mjs', import.meta.url))
-  async function run(args: string[]): Promise<{ code: number | null; stdout: string; stderr: string }> {
-    const child = spawn(process.execPath, [cli, ...args], { stdio: ['ignore', 'pipe', 'pipe'] })
+  async function run(args: string[]): Promise<{ code: number | null, stdout: string, stderr: string }> {
+    const child = spawn(process.execPath, [cli, ...args], {
+      stdio: ['ignore', 'pipe', 'pipe'],
+    })
     let stdout = ''
     let stderr = ''
-    child.stdout.on('data', (chunk: Buffer) => { stdout += String(chunk) })
-    child.stderr.on('data', (chunk: Buffer) => { stderr += String(chunk) })
+    child.stdout.on('data', (chunk: Buffer) => {
+      stdout += String(chunk)
+    })
+    child.stderr.on('data', (chunk: Buffer) => {
+      stderr += String(chunk)
+    })
     const timer = setTimeout(() => child.kill(), 3000)
     try {
-      const code = await new Promise<number | null>((resolve, reject) => { child.on('error', reject); child.on('close', resolve) })
+      const code = await new Promise<number | null>((resolve, reject) => {
+        child.on('error', reject)
+        child.on('close', resolve)
+      })
       return { code, stdout, stderr }
-    } finally { clearTimeout(timer); if (child.exitCode === null) child.kill() }
+    }
+    finally {
+      clearTimeout(timer)
+      if (child.exitCode === null)
+        child.kill()
+    }
   }
   const help = await run(['--help'])
   assert.equal(help.code, 0)
@@ -206,7 +292,8 @@ try {
   assert.match(invalid.stderr, /参数无效/)
   console.log('ok  新构建 CLI 帮助/参数校验无需扩展即可退出')
   console.log('\n全部一次性传输自检通过')
-} finally {
+}
+finally {
   cleanup.abort()
   await Promise.allSettled(tasks)
 }

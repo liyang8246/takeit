@@ -21,5 +21,3 @@ pnpm run ci
 在 Chrome 加载 [extension](<extension/>)。开发使用 Node.js 24.15+；CLI 仍支持 22.18+。
 
 Token 即授权。切换即撤权。超时不回滚。
-
-npm 包尚未发布。

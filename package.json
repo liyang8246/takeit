@@ -4,6 +4,10 @@
   "version": "0.4.0",
   "packageManager": "pnpm@12.21.0",
   "description": "Control one explicitly authorized browser tab with a one-shot CLI",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/liyang8246/takeit.git"
+  },
   "bin": { "takeit": "dist/cli.mjs" },
   "files": ["dist/cli.mjs"],
   "engines": { "node": ">=22.18.0" },

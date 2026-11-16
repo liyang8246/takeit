@@ -1,0 +1,39 @@
+name: Publish
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: read
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - uses: pnpm/action-setup@v6
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '24'
+          check-latest: true
+          cache: pnpm
+          registry-url: https://registry.npmjs.org/
+      - name: Verify release
+        run: |
+          test "$(node -p "require('./package.json').name")" = '@liyang8246/takeit'
+          test "$GITHUB_REF_NAME" = "v$(node -p "require('./package.json').version")"
+          git merge-base --is-ancestor "$GITHUB_SHA" origin/main
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm run ci
+      - run: pnpm pack --pack-destination "$RUNNER_TEMP"
+      - name: Publish to npm
+        run: |
+          npm install --global npm@12
+          npm publish "$RUNNER_TEMP/liyang8246-takeit-${GITHUB_REF_NAME#v}.tgz" --access public --provenance --registry=https://registry.npmjs.org/

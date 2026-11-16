@@ -1,0 +1,26 @@
+{
+  "name": "@liyang8246/takeit",
+  "version": "0.4.0",
+  "description": "Control one explicitly authorized browser tab with a one-shot CLI",
+  "type": "module",
+  "bin": { "takeit": "dist/cli.mjs" },
+  "files": ["dist/cli.mjs"],
+  "engines": { "node": ">=22.18.0" },
+  "publishConfig": { "access": "public" },
+  "scripts": {
+    "build": "node build.mjs",
+    "dev": "node src/cli/main.ts",
+    "typecheck": "tsc --noEmit",
+    "selftest": "npm run build && node dev/protocol.test.ts && node dev/cli.test.ts && node dev/selftest.ts && node dev/snapshot.test.ts && node dev/cdp.test.ts && node dev/extension.test.ts",
+    "test": "npm run selftest",
+    "prepack": "npm run build"
+  },
+  "devDependencies": {
+    "@resvg/resvg-js": "^2.6.2",
+    "@types/chrome": "^0.1.34",
+    "@types/node": "^24.10.1",
+    "esbuild": "^0.27.0",
+    "jquery": "^4.0.0",
+    "typescript": "^5.9.3"
+  }
+}

@@ -1,0 +1,6 @@
+node_modules/
+extension/bg.js
+extension/offscreen.js
+extension/popup.js
+dist/
+.agents/clonedeps/repos/*
